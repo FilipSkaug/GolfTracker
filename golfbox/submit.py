@@ -347,19 +347,50 @@ def fill_scores(page: Page, r: dict) -> None:
         log(f"::warning::GolfBox shows total {shown}, the round total is {total} - check the screenshots")
 
 
+def visible_messages(page: Page) -> list[str]:
+    """Texts of message boxes / validation errors currently shown."""
+    loc = page.locator(
+        ".errorbox:visible, .alert:visible, .error:visible, .invalid-feedback:visible, "
+        ".validation-summary-errors:visible, .field-validation-error:visible, [role=alert]:visible, "
+        ".toast:visible, .modal.show:visible"
+    )
+    texts = []
+    for t in loc.all_inner_texts():
+        t = " ".join(t.split())
+        if t and t not in texts:
+            texts.append(t[:300])
+    return texts
+
+
 def save(page: Page) -> None:
     if DRY_RUN:
         log("DRY RUN: form filled, not pressing Lagre (set repository variable GOLFBOX_DRY_RUN=false to submit)")
+        print("::notice::Dry run - the form was filled in but NOT saved. "
+              "Set the repository variable GOLFBOX_DRY_RUN to false to save rounds.", flush=True)
         return
     log("Pressing Lagre")
     page.get_by_text("Lagre", exact=True).first.click()
     settle(page)
+    # A confirmation step inside the page ("Er du sikker?" with Ja/OK).
+    for label in ("Ja", "Bekreft", "OK", "Send inn", "Innlever"):
+        btn = page.locator(".modal.show, [role=dialog]").get_by_text(label, exact=True)
+        if btn.count() and btn.first.is_visible():
+            log(f"  Confirming '{label}'")
+            btn.first.click()
+            settle(page)
+            break
     shot(page, "after-save")
-    errors = page.locator(".errorbox:visible, .alert-danger:visible, .error:visible, [role=alert]:visible")
-    texts = [t.strip() for t in errors.all_inner_texts() if t.strip()]
-    if texts:
-        raise Fail("GolfBox reported: " + " | ".join(texts))
-    log("Saved. Your marker now has to approve it in GolfBox (Score -> Til godkjennelse).")
+    messages = visible_messages(page)
+    if messages:
+        log("  GolfBox shows: " + " | ".join(messages))
+    # Still on the filled-in form = GolfBox did not accept it.
+    form_still_there = page.get_by_text("Spilledato", exact=True).count() and page.get_by_text("Lagre", exact=True).count()
+    if form_still_there and not any(re.search(r"lagret|innlevert|sendt|godkjenn", m, re.I) for m in messages):
+        raise Fail("Pressed Lagre but GolfBox kept the form open, so the round was probably not saved."
+                   + (" GolfBox says: " + " | ".join(messages) if messages else " No message was shown."))
+    print("::notice::Saved in GolfBox" + (": " + " | ".join(messages) if messages else "")
+          + ". Your marker now approves it under Score -> Til godkjennelse.", flush=True)
+    log("Saved.")
 
 
 def main() -> int:
@@ -388,6 +419,14 @@ def main() -> int:
         )
         page = context.new_page()
         page.set_default_timeout(TIMEOUT_MS)
+
+        # Playwright cancels confirm() pop-ups by default, which would silently
+        # abort "Lagre". Accept them, and log what they said.
+        def on_dialog(dialog) -> None:
+            log(f"  GolfBox pop-up: {' '.join(dialog.message.split())[:300]} -> OK")
+            dialog.accept()
+
+        page.on("dialog", on_dialog)
         try:
             form_url = os.environ.get("GOLFBOX_FORM_URL")
             if form_url:
