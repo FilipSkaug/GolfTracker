@@ -1,0 +1,77 @@
+# Registers rounds from the GolfTracker display in GolfBox.
+#
+# Triggered by the display (repository_dispatch "golfbox-round") when it syncs
+# with internet, or by hand from the Actions tab for testing.
+#
+# Setup (Settings -> Secrets and variables -> Actions):
+#   secrets:   GOLFBOX_USERNAME, GOLFBOX_PASSWORD,
+#              GOLFBOX_MARKER   (the marker's full name; a secret so it's hidden in public logs)
+#   variables: GOLFBOX_DRY_RUN  ("false" once a test run looks right; anything else = test mode)
+
+name: GolfBox upload
+
+on:
+  repository_dispatch:
+    types: [golfbox-round]
+  workflow_dispatch:
+    inputs:
+      round:
+        description: 'Round JSON, e.g. {"course":"Byneset Nord","par":[5,3,...],"strokes":[6,3,...]}'
+        required: true
+      date:
+        description: "Play date dd.mm.yyyy (default: today)"
+        required: false
+      time:
+        description: "Tee time HH:MM (default: about 4 hours ago)"
+        required: false
+      dry_run:
+        description: "Fill the form but don't press Lagre"
+        type: boolean
+        default: true
+
+concurrency:
+  group: golfbox
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: golfbox/requirements.txt
+
+      - name: Install Playwright
+        run: |
+          pip install -r golfbox/requirements.txt
+          python -m playwright install --with-deps chromium
+
+      - name: Submit round to GolfBox
+        env:
+          GOLFBOX_USERNAME: ${{ secrets.GOLFBOX_USERNAME }}
+          GOLFBOX_PASSWORD: ${{ secrets.GOLFBOX_PASSWORD }}
+          GOLFBOX_MARKER: ${{ secrets.GOLFBOX_MARKER }}
+          ROUND_JSON: ${{ github.event_name == 'repository_dispatch' && toJSON(github.event.client_payload.round) || inputs.round }}
+          PLAY_DATE: ${{ inputs.date }}
+          PLAY_TIME: ${{ inputs.time }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && format('{0}', inputs.dry_run) || vars.GOLFBOX_DRY_RUN || 'true' }}
+          SCREENSHOT_DIR: screenshots
+        run: python golfbox/submit.py
+
+      # Screenshots show your GolfBox profile, so only keep them in a private repo.
+      - name: Upload screenshots
+        if: always() && github.event.repository.private
+        uses: actions/upload-artifact@v4
+        with:
+          name: golfbox-screenshots
+          path: screenshots
+          retention-days: 7
+          if-no-files-found: ignore

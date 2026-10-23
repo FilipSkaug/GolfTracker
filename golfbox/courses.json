@@ -1,0 +1,12 @@
+{
+  "_help": "Maps course names on the display to GolfBox's Innlever score dropdowns. Each value is matched against the dropdown texts (exact first, then 'contains'). tee: Utslagssted; null keeps GolfBox's default. If a value is wrong, the run fails and its log lists the options GolfBox offers.",
+  "Byneset Nord": { "country": "Norge", "club": "Byneset Golfklubb", "course": "Byneset North", "tee": "57" },
+  "Byneset Sør": { "country": "Norge", "club": "Byneset Golfklubb", "course": "South", "tee": null },
+  "Trondheim GK Sommerseter": { "country": "Norge", "club": "Trondheim Golfklubb", "course": null, "tee": null },
+  "Asker Golfklubb": { "country": "Norge", "club": "Asker Golfklubb", "course": null, "tee": null },
+  "Bærum Golfklubb": { "country": "Norge", "club": "Bærum Golfklubb", "course": "18", "tee": null },
+  "Saurines de la Torre": { "country": "Spania", "club": "Saurines", "course": null, "tee": null },
+  "New Sierra Golf": { "country": "Spania", "club": "New Sierra", "course": null, "tee": null },
+  "La Serena Golf": { "country": "Spania", "club": "Serena", "course": null, "tee": null },
+  "Lo Romero Golf": { "country": "Spania", "club": "Lo Romero", "course": null, "tee": null }
+}
