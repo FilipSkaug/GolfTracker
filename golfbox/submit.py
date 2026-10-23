@@ -289,9 +289,24 @@ def set_marker(page: Page, marker: str) -> None:
     if not by_name:
         raise Fail("Marker search has no 'Medlemsnavn' option. Offers: " + ", ".join(o["text"] for o in opts))
     mode.select_option(value=by_name["value"])
-    search = mode.locator("xpath=following::input[@type='text' or @type='search' or not(@type)][1]")
-    search.fill(marker)
-    page.get_by_text("Søk", exact=True).first.click()
+    settle(page)
+    search = mode.locator(
+        "xpath=following::input[(@type='text' or @type='search' or not(@type)) and not(@disabled)][1]"
+    )
+    # Type key by key: GolfBox only enables "Søk" on real keystrokes, not a pasted value.
+    search.click()
+    search.fill("")
+    search.press_sequentially(marker, delay=40)
+    # "Søk" is text inside the real button element; click that, else press Enter.
+    button = page.locator(
+        "xpath=(//*[normalize-space(text())='Søk'])[1]/ancestor-or-self::*"
+        "[self::button or self::a or @role='button' or contains(concat(' ', @class, ' '), ' btn ')][1]"
+    )
+    try:
+        button.first.click(timeout=5000)
+    except Exception:
+        log("  Søk button not clickable, pressing Enter in the search field")
+        search.press("Enter")
     row = page.locator(f"xpath=//tr[td[contains(normalize-space(.), {xpath_literal(marker)})]]")
     try:
         row.first.wait_for(timeout=TIMEOUT_MS)
@@ -408,6 +423,6 @@ if __name__ == "__main__":
         import traceback
 
         traceback.print_exc()
-        lines = [ln.strip() for ln in str(e).splitlines() if ln.strip()][:4]
+        lines = [ln.strip() for ln in str(e).splitlines() if ln.strip()][:10]
         print(f"::error::{type(e).__name__}: {' | '.join(lines)}", flush=True)
         sys.exit(1)
