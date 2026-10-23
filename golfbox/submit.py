@@ -355,7 +355,18 @@ def visible_messages(page: Page) -> list[str]:
         ".toast:visible, .modal.show:visible"
     )
     texts = []
-    for t in loc.all_inner_texts():
+    for attempt in range(5):
+        try:
+            found = loc.all_inner_texts()
+            break
+        except Exception as e:  # the page is still navigating; wait and read the new one
+            if "context was destroyed" not in str(e) and "navigat" not in str(e):
+                raise
+            time.sleep(1)
+            settle(page)
+    else:
+        return texts
+    for t in found:
         t = " ".join(t.split())
         if t and t not in texts:
             texts.append(t[:300])
@@ -369,8 +380,21 @@ def save(page: Page) -> None:
               "Set the repository variable GOLFBOX_DRY_RUN to false to save rounds.", flush=True)
         return
     log("Pressing Lagre")
-    page.get_by_text("Lagre", exact=True).first.click()
+    # Lagre posts the form and GolfBox loads a new page; wait for it before reading
+    # anything (a validation error instead keeps the same page, hence no hard fail).
+    try:
+        with page.expect_navigation(timeout=TIMEOUT_MS):
+            page.get_by_text("Lagre", exact=True).first.click()
+        log(f"  GolfBox loaded {page.url}")
+    except Exception as e:
+        if "Timeout" not in type(e).__name__ and "Timeout" not in str(e):
+            raise
+        log("  No new page after Lagre")
     settle(page)
+    try:
+        page.wait_for_load_state("load", timeout=TIMEOUT_MS)
+    except Exception:
+        pass
     # A confirmation step inside the page ("Er du sikker?" with Ja/OK).
     for label in ("Ja", "Bekreft", "OK", "Send inn", "Innlever"):
         btn = page.locator(".modal.show, [role=dialog]").get_by_text(label, exact=True)
