@@ -13,6 +13,7 @@ Environment:
   PLAY_TIME         HH:MM, default about four hours before now
   DRY_RUN           anything but "false" fills the form without pressing Lagre
   SCREENSHOT_DIR    where step screenshots go (uploaded only from private repos)
+  PLAYWRIGHT_CHANNEL  "chrome" to use the installed Google Chrome instead of Playwright's
   GOLFBOX_FORM_URL  testing only: open this page instead of logging in
 """
 
@@ -353,7 +354,12 @@ def main() -> int:
         f"{' (dry run)' if DRY_RUN else ''}")
 
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=os.environ.get("HEADFUL") != "1")
+        # PLAYWRIGHT_CHANNEL=chrome uses the installed Google Chrome (as on GitHub's
+        # runners) instead of a browser downloaded by "playwright install".
+        browser = pw.chromium.launch(
+            headless=os.environ.get("HEADFUL") != "1",
+            channel=os.environ.get("PLAYWRIGHT_CHANNEL") or None,
+        )
         context = browser.new_context(
             locale="nb-NO",
             timezone_id="Europe/Oslo",

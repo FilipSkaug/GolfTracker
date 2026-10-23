@@ -49,10 +49,10 @@ jobs:
           cache: pip
           cache-dependency-path: golfbox/requirements.txt
 
+      # The runner already has Google Chrome, so no browser download or apt
+      # packages are needed (PLAYWRIGHT_CHANNEL below) - just the Python package.
       - name: Install Playwright
-        run: |
-          pip install -r golfbox/requirements.txt
-          python -m playwright install --with-deps chromium
+        run: pip install -r golfbox/requirements.txt
 
       - name: Submit round to GolfBox
         env:
@@ -64,6 +64,7 @@ jobs:
           PLAY_TIME: ${{ inputs.time }}
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && format('{0}', inputs.dry_run) || vars.GOLFBOX_DRY_RUN || 'true' }}
           SCREENSHOT_DIR: screenshots
+          PLAYWRIGHT_CHANNEL: chrome
         run: python golfbox/submit.py
 
       # Screenshots show your GolfBox profile, so only keep them in a private repo.
