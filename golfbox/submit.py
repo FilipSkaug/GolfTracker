@@ -154,7 +154,9 @@ def options_of(select) -> list[dict]:
 
 def pick(options: list[dict], want: str, prefer: str | None = None) -> dict | None:
     w = norm(want)
-    usable = [o for o in options if not o["disabled"] and o["value"] not in ("", "0", "-1")] or options
+    # Match on text only: GolfBox uses values like "0" for real choices (e.g. Medlemsnavn),
+    # and placeholders such as "Velg bane" never match a wanted text anyway.
+    usable = [o for o in options if not o["disabled"]] or options
     for test in (lambda t: t == w, lambda t: t.startswith(w), lambda t: w in t):
         hits = [o for o in usable if test(norm(o["text"]))]
         if hits:
