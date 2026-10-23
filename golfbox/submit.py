@@ -402,3 +402,12 @@ if __name__ == "__main__":
     except Fail as e:
         print(f"::error::{e}", flush=True)
         sys.exit(1)
+    except Exception as e:
+        # Unexpected crash (e.g. a page element never appeared): show the gist as an
+        # annotation on the run page as well as the full traceback in the log.
+        import traceback
+
+        traceback.print_exc()
+        lines = [ln.strip() for ln in str(e).splitlines() if ln.strip()][:4]
+        print(f"::error::{type(e).__name__}: {' | '.join(lines)}", flush=True)
+        sys.exit(1)
