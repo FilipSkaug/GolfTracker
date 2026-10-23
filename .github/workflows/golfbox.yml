@@ -6,7 +6,7 @@
 # Setup (Settings -> Secrets and variables -> Actions):
 #   secrets:   GOLFBOX_USERNAME, GOLFBOX_PASSWORD,
 #              GOLFBOX_MARKER   (the marker's full name; a secret so it's hidden in public logs)
-#   variables: GOLFBOX_DRY_RUN  ("false" once a test run looks right; anything else = test mode)
+#   variable (or secret): GOLFBOX_DRY_RUN  ("false" once a test run looks right; anything else = test mode)
 
 name: GolfBox upload
 
@@ -62,7 +62,7 @@ jobs:
           ROUND_JSON: ${{ github.event_name == 'repository_dispatch' && toJSON(github.event.client_payload.round) || inputs.round }}
           PLAY_DATE: ${{ inputs.date }}
           PLAY_TIME: ${{ inputs.time }}
-          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && format('{0}', inputs.dry_run) || vars.GOLFBOX_DRY_RUN || 'true' }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && format('{0}', inputs.dry_run) || vars.GOLFBOX_DRY_RUN || secrets.GOLFBOX_DRY_RUN || 'true' }}
           SCREENSHOT_DIR: screenshots
           PLAYWRIGHT_CHANNEL: chrome
         run: python golfbox/submit.py
