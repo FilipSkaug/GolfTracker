@@ -38,12 +38,22 @@ int takeSteps() {
   return ENC_REVERSE ? -steps : steps;
 }
 
+static bool stable = false;  // true = pressed
+static bool lastRaw = false;
+static uint32_t rawChangedAt = 0;
+static uint32_t pressedAt = 0;
+static bool longFired = false;
+
+void reset() {
+  portENTER_CRITICAL(&s_mux);
+  s_counts = 0;
+  portEXIT_CRITICAL(&s_mux);
+  stable = lastRaw = digitalRead(PIN_BTN) == LOW;
+  longFired = true;  // a press still held from before never fires
+  rawChangedAt = pressedAt = millis();
+}
+
 Button takeButton() {
-  static bool stable = false;  // true = pressed
-  static bool lastRaw = false;
-  static uint32_t rawChangedAt = 0;
-  static uint32_t pressedAt = 0;
-  static bool longFired = false;
 
   uint32_t now = millis();
   bool raw = digitalRead(PIN_BTN) == LOW;

@@ -10,5 +10,7 @@ void begin();
 int takeSteps();
 // Call every loop; returns a press event at most once per press.
 Button takeButton();
+// Forget pending clicks/presses (e.g. the press that woke the display).
+void reset();
 
 }  // namespace input

@@ -42,7 +42,7 @@ String sendPending() {
   std::vector<Round> rounds = storage::history();
   std::vector<const Round*> pending;
   for (auto it = rounds.rbegin(); it != rounds.rend(); ++it) {  // oldest first
-    if (!it->sent && totals(*it).played > 0) pending.push_back(&*it);
+    if (!it->sent && !it->skip && totals(*it).played > 0) pending.push_back(&*it);
   }
   if (pending.empty()) return "GolfBox: all sent";
   if (!syncClock()) return "GolfBox: no internet";

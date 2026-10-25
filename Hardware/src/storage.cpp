@@ -11,6 +11,7 @@ static const char* kCoursesPath = "/courses.json";
 static const char* kRoundPath = "/round.json";
 static const char* kHistoryPath = "/history.json";
 static const char* kSettingsPath = "/settings.json";
+static const char* kGbDeletePath = "/gb_delete.json";
 // Bump when kDefaultCourses gains courses that existing devices should receive.
 static const char* kDefaultsMarker = "/defaults_v2";
 
@@ -66,6 +67,12 @@ static String parseCourses(JsonArrayConst arr, std::vector<Course>& out) {
       if (p < 3 || p > 6) return "Par must be 3-6";
       c.par[i] = p;
     }
+    JsonObjectConst gb = o["gamebook"];
+    if (!gb.isNull()) {
+      c.gbCourseId = gb["courseId"] | 0;
+      c.gbTeeboxId = gb["teeboxId"] | 0;
+      c.gbName = gb["name"] | "";
+    }
     out.push_back(c);
   }
   return "";
@@ -79,6 +86,12 @@ static void writeCourses() {
     o["name"] = c.name;
     JsonArray par = o["par"].to<JsonArray>();
     for (int i = 0; i < c.holes; i++) par.add(c.par[i]);
+    if (c.gbCourseId) {
+      JsonObject gb = o["gamebook"].to<JsonObject>();
+      gb["courseId"] = c.gbCourseId;
+      gb["teeboxId"] = c.gbTeeboxId;
+      gb["name"] = c.gbName;
+    }
   }
   writeJson(kCoursesPath, doc);
 }
@@ -126,6 +139,8 @@ bool begin() {
     s_settings.wifiPass = doc["wifiPass"] | "";
     s_settings.githubRepo = doc["githubRepo"] | s_settings.githubRepo.c_str();
     s_settings.githubToken = doc["githubToken"] | "";
+    s_settings.gamebookEmail = doc["gamebookEmail"] | "";
+    s_settings.gamebookPass = doc["gamebookPass"] | "";
   }
   return true;
 }
@@ -151,10 +166,44 @@ String setCoursesJson(const String& json) {
   return "";
 }
 
+static void gbToJson(const GameBookRound& g, JsonObject o) {
+  o["courseId"] = g.courseId;
+  o["teeMen"] = g.teeMen;
+  o["gameId"] = g.gameId;
+  o["roundId"] = g.roundId;
+  o["groupId"] = g.groupId;
+  o["teamId"] = g.teamId;
+  o["code"] = g.code;
+  o["startTime"] = g.startTime;
+  o["configVersion"] = g.configVersion;
+  o["finished"] = g.finished;
+  JsonArray sent = o["sent"].to<JsonArray>();
+  for (int i = 0; i < MAX_HOLES; i++) sent.add(g.sent[i]);
+}
+
+static void gbFromJson(JsonObjectConst o, GameBookRound& g) {
+  g = GameBookRound();
+  if (o.isNull()) return;
+  g.track = true;
+  g.courseId = o["courseId"] | 0;
+  g.teeMen = o["teeMen"] | 0;
+  g.gameId = o["gameId"] | "";
+  g.roundId = o["roundId"] | "";
+  g.groupId = o["groupId"] | "";
+  g.teamId = o["teamId"] | "";
+  g.code = o["code"] | "";
+  g.startTime = o["startTime"] | "";
+  g.configVersion = o["configVersion"] | 0;
+  g.finished = o["finished"] | false;
+  JsonArrayConst sent = o["sent"];
+  for (int i = 0; i < MAX_HOLES && i < (int)sent.size(); i++) g.sent[i] = sent[i] | 0;
+}
+
 static void roundToJson(const Round& r, JsonObject o) {
   o["course"] = r.course;
   o["hole"] = r.hole;
   o["first"] = r.firstHole;
+  if (r.gb.track) gbToJson(r.gb, o["gb"].to<JsonObject>());
   JsonArray par = o["par"].to<JsonArray>();
   JsonArray strokes = o["strokes"].to<JsonArray>();
   for (int i = 0; i < r.holes; i++) {
@@ -170,10 +219,12 @@ static bool roundFromJson(JsonObjectConst o, Round& r) {
   r = Round();
   r.id = o["id"] | 0;
   r.sent = o["sent"] | false;
+  r.skip = o["skip"] | false;
   r.course = o["course"] | "";
   r.holes = par.size();
   r.hole = min<int>(o["hole"] | 0, r.holes - 1);
   r.firstHole = o["first"] | 1;
+  gbFromJson(o["gb"], r.gb);
   for (int i = 0; i < r.holes; i++) {
     r.par[i] = par[i] | 4;
     r.strokes[i] = strokes[i] | 0;
@@ -204,7 +255,7 @@ static void loadHistory(JsonDocument& doc) {
   }
 }
 
-void appendHistory(const Round& r) {
+int appendHistory(const Round& r) {
   JsonDocument doc;
   loadHistory(doc);
   int id = doc["nextId"] | 1;
@@ -214,6 +265,7 @@ void appendHistory(const Round& r) {
   o.remove("hole");
   doc["nextId"] = id + 1;
   writeJson(kHistoryPath, doc);
+  return id;
 }
 
 std::vector<Round> history() {
@@ -249,16 +301,80 @@ bool deleteHistory(int id) {
   return false;
 }
 
-void markSent(int id) {
+// Applies `change` to the history entry with this id and saves.
+template <typename F>
+static void updateRound(int id, F change) {
   JsonDocument doc;
   loadHistory(doc);
   for (JsonObject o : doc["rounds"].as<JsonArray>()) {
     if ((o["id"] | -1) == id) {
-      o["sent"] = true;
+      change(o);
       writeJson(kHistoryPath, doc);
       return;
     }
   }
+}
+
+void updateHistoryGb(const Round& r) {
+  updateRound(r.id, [&r](JsonObject o) {
+    if (r.gb.track) gbToJson(r.gb, o["gb"].to<JsonObject>());
+    else o.remove("gb");
+  });
+}
+
+bool pendingGbRound(Round& r) {
+  for (const Round& h : history()) {  // newest first
+    if (h.gb.track && !h.gb.finished) {
+      r = h;
+      return true;
+    }
+  }
+  return false;
+}
+
+void queueGbDelete(const String& gameId, const String& code) {
+  JsonDocument doc;
+  if (!readJson(kGbDeletePath, doc) || !doc.is<JsonArray>()) doc.to<JsonArray>();
+  JsonObject o = doc.as<JsonArray>().add<JsonObject>();
+  o["gameId"] = gameId;
+  o["code"] = code;
+  writeJson(kGbDeletePath, doc);
+}
+
+bool nextGbDelete(String& gameId, String& code) {
+  JsonDocument doc;
+  if (!readJson(kGbDeletePath, doc) || doc.as<JsonArray>().size() == 0) return false;
+  gameId = doc[0]["gameId"] | "";
+  code = doc[0]["code"] | "";
+  return !gameId.isEmpty();
+}
+
+void doneGbDelete(const String& gameId) {
+  JsonDocument doc;
+  if (!readJson(kGbDeletePath, doc)) return;
+  JsonArray arr = doc.as<JsonArray>();
+  for (size_t i = 0; i < arr.size(); i++) {
+    if (gameId == (arr[i]["gameId"] | "")) {
+      arr.remove(i);
+      break;
+    }
+  }
+  writeJson(kGbDeletePath, doc);
+}
+
+void markSent(int id, bool sent) {
+  updateRound(id, [sent](JsonObject o) {
+    if (sent) {
+      o["sent"] = true;
+    } else {
+      o.remove("sent");
+      o.remove("skip");
+    }
+  });
+}
+
+void markSkip(int id) {
+  updateRound(id, [](JsonObject o) { o["skip"] = true; });
 }
 
 String roundPayload(const Round& r) {
@@ -283,6 +399,10 @@ String updateSettingsJson(const String& json) {
   if (in["wifiPass"].is<const char*>()) next.wifiPass = in["wifiPass"].as<String>();
   if (in["githubRepo"].is<const char*>()) next.githubRepo = in["githubRepo"].as<String>();
   if (in["githubToken"].is<const char*>()) next.githubToken = in["githubToken"].as<String>();
+  if (in["gamebookEmail"].is<const char*>()) next.gamebookEmail = in["gamebookEmail"].as<String>();
+  if (in["gamebookPass"].is<const char*>()) next.gamebookPass = in["gamebookPass"].as<String>();
+  next.gamebookEmail.trim();
+  if (next.gamebookEmail.length() > 100 || next.gamebookPass.length() > 100) return "Value too long";
   next.apiKey.trim();
   next.wifiSsid.trim();
   next.githubRepo.trim();
@@ -300,6 +420,8 @@ String updateSettingsJson(const String& json) {
   doc["wifiPass"] = next.wifiPass;
   doc["githubRepo"] = next.githubRepo;
   doc["githubToken"] = next.githubToken;
+  doc["gamebookEmail"] = next.gamebookEmail;
+  doc["gamebookPass"] = next.gamebookPass;
   if (!writeJson(kSettingsPath, doc)) return "Could not save";
   s_settings = next;
   return "";
@@ -312,6 +434,8 @@ String settingsJson() {
   doc["hasWifiPass"] = !s_settings.wifiPass.isEmpty();
   doc["githubRepo"] = s_settings.githubRepo;
   doc["hasGithubToken"] = !s_settings.githubToken.isEmpty();
+  doc["gamebookEmail"] = s_settings.gamebookEmail;
+  doc["hasGamebookPass"] = !s_settings.gamebookPass.isEmpty();
   String s;
   serializeJson(doc, s);
   return s;

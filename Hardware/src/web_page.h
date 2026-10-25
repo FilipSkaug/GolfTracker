@@ -63,7 +63,7 @@ padding:10px 16px;border-radius:20px;font-weight:600;opacity:0;transition:opacit
 <script>
 const $=s=>document.querySelector(s);
 const API='https://api.golfcourseapi.com';
-let tab='rounds',courses=[],rounds=[],settings={},editing=null,search={q:''};
+let tab='rounds',courses=[],rounds=[],settings={},editing=null,search={q:''},gbLink=null;
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const sum=a=>a.reduce((x,y)=>x+y,0);
 const toPar=d=>d===0?'E':(d>0?'+'+d:''+d);
@@ -79,7 +79,7 @@ const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||'Reques
 
 async function load(){try{[courses,settings]=await Promise.all([api('/api/courses'),api('/api/settings')]);
 const h=await api('/api/rounds');rounds=h.rounds.slice().reverse();stamp()}
-catch(e){$('#view').innerHTML='<div class="empty">Could not reach the display.<br>Is the phone on the <b>GolfTracker</b> Wi-Fi?</div>';return}render()}
+catch(e){$('#view').innerHTML='<div class="empty">Could not reach the display.<br>Is Phone sync running, and are you on the same network (hotspot or <b>GolfTracker</b> Wi-Fi)?</div>';return}render()}
 
 // ---- Rounds ----
 function played(r){const p=[],s=[];r.strokes.forEach((x,i)=>{if(x){p.push(r.par[i]);s.push(x)}});return{par:sum(p),strokes:sum(s),n:s.length}}
@@ -93,11 +93,15 @@ return`<table><tr><th class="lbl">Hole</th>${idx.map(i=>`<th>${(r.first||1)+i}</
 function renderRounds(){if(!rounds.length)return'<div class="empty">No rounds yet.<br>Play a round on the display and it will show up here.</div>';
 return rounds.map(r=>{const p=played(r);const n=r.par.length;
 return`<div class="card"><div class="row"><div><div class="title">${esc(r.course)}</div>
-<div class="muted">${esc(r.date)} · Round #${r.id}${p.n<n?` · ${p.n}/${n} holes`:''}${r.sent?' · <span style="color:var(--accent)">Sent to GolfBox</span>':''}</div></div>
+<div class="muted">${esc(r.date)} · Round #${r.id}${p.n<n?` · ${p.n}/${n} holes`:''}${r.sent?' · <span style="color:var(--accent)">Sent to GolfBox</span>':r.skip?' · Not sent to GolfBox':''}</div></div>
 <div style="text-align:right"><div class="score">${p.strokes}</div><div class="muted">${toPar(p.strokes-p.par)}</div></div></div>
 ${half(r,0,9,n>9?'Out':'Tot')}${half(r,9,18,'In')}
 <div class="btns"><button class="b p" onclick="copyRound(${r.id})">Copy scores</button>
+${r.sent||r.skip?`<button class="b" onclick="resendRound(${r.id})">${r.sent?'Send to GolfBox again':'Send to GolfBox'}</button>`:''}
 <button class="b x" onclick="delRound(${r.id})">Delete</button></div></div>`}).join('')}
+
+async function resendRound(id){try{await api('/api/rounds/resend?id='+id,{});const r=rounds.find(r=>r.id==id);if(r){r.sent=false;r.skip=false}render();
+toast(settings.wifiSsid?'Sending now if the display is online, otherwise on the next sync':'Will be sent on the next sync with internet')}catch(e){toast(e.message)}}
 
 async function delRound(id){if(!confirm('Delete this round from the display?'))return;
 try{await api('/api/rounds/delete?id='+id,{});rounds=rounds.filter(r=>r.id!=id);render()}catch(e){toast(e.message)}}
@@ -160,11 +164,15 @@ return`<div class="card"><div class="title">Find a course</div>
 <button class="b p">Search</button></form>${body}</div>`}
 
 // ---- Courses ----
-function renderCourses(){if(editing)return renderEditor();
+function renderCourses(){if(editing)return renderEditor();if(gbLink)return renderGbLink();
 const list=courses.map((c,i)=>`<div class="card"><div class="row"><div><div class="title">${esc(c.name)}</div>
-<div class="muted">${c.par.length} holes · Par ${sum(c.par)}</div></div>
-<div><button class="b" onclick="edit(${i})">Edit</button></div></div></div>`).join('');
-return renderSearch()+(list||'<div class="empty">No courses on the display yet.</div>')+
+<div class="muted">${c.par.length} holes · Par ${sum(c.par)}</div>
+<div class="muted">${c.gamebook?`GameBook: ${esc(c.gamebook.name)}`:'GameBook: not linked'}</div></div>
+<div><button class="b" onclick="edit(${i})">Edit</button></div></div>
+<div class="btns"><button class="b" onclick="gbStart(${i})">${c.gamebook?'Change GameBook link':'Link GameBook'}</button>
+${c.gamebook?`<button class="b x" onclick="gbUnlink(${i})">Unlink</button>`:''}</div></div>`).join('');
+return`<button class="b p" style="width:100%;margin-bottom:12px" onclick="gbStart(-1)">Import from GameBook</button>`+
+renderSearch()+(list||'<div class="empty">No courses on the display yet.</div>')+
 '<button class="b" style="width:100%" onclick="edit(-1)">Add course manually</button>'}
 
 function renderEditor(){const e=editing;
@@ -182,8 +190,43 @@ function edit(i){const c=i<0?{name:'',par:Array(18).fill(4)}:courses[i];editing=
 function setHoles(n){const p=editing.par.slice(0,n);while(p.length<n)p.push(4);editing.par=p;render()}
 async function pushCourses(next){try{courses=await api('/api/courses',next);editing=null;search.course=null;render();toast('Saved to display')}catch(e){toast(e.message)}}
 function saveCourse(){const name=editing.name.trim();if(!name)return toast('Give the course a name');
-const next=courses.slice();const c={name,par:editing.par};if(editing.index<0)next.push(c);else next[editing.index]=c;pushCourses(next)}
+const next=courses.slice();const c={name,par:editing.par};
+if(editing.index>=0&&courses[editing.index].gamebook)c.gamebook=courses[editing.index].gamebook;if(editing.index<0)next.push(c);else next[editing.index]=c;pushCourses(next)}
 function delCourse(){if(!confirm('Delete this course?'))return;const next=courses.slice();next.splice(editing.index,1);pushCourses(next)}
+
+// ---- GameBook course link (the display looks courses up in GameBook over the hotspot) ----
+async function gbFetch(path){const r=await fetch(path);const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||'GameBook lookup failed');return j}
+async function gbStart(i){gbLink={index:i,loading:true};render();
+try{gbLink.favs=await gbFetch('/api/gamebook/favorites')}catch(e){gbLink.error=e.message}gbLink.loading=false;render()}
+async function gbPick(k){const f=gbLink.favs[k];gbLink.loading=true;gbLink.error='';render();
+try{gbLink.course=await gbFetch('/api/gamebook/course?id='+f.courseId);if(gbLink.course.tees.length==1)return gbSave(0)}catch(e){gbLink.error=e.message}
+gbLink.loading=false;render()}
+// GameBook's name for a course: the course name, with the club in front when the
+// course name alone doesn't say which club (e.g. "Hovedbanen").
+function gbCourseName(c){const club=(c.club||'').trim(),course=(c.course||'').trim(),first=club.split(' ')[0].toLowerCase();
+return(course.toLowerCase().includes(first)?course:`${club} - ${course}`).slice(0,40)}
+function gbSave(t){const c=gbLink.course,tee=c.tees[t];const next=courses.slice();
+const link={courseId:c.courseId,teeboxId:tee.id,name:`${c.club} / ${c.course} - ${tee.name}`};
+if(gbLink.index>=0){next[gbLink.index]={...next[gbLink.index],gamebook:link};gbLink=null;return pushCourses(next)}
+// Import: a new course with GameBook's pars (or update one with the same name).
+const par=(c.par||[]).slice(0,18);
+if(!par.length||par.some(p=>p<3||p>6)){gbLink.error='GameBook has no usable pars for this course - add it manually and link it instead.';return render()}
+const name=gbCourseName(c),i=next.findIndex(x=>x.name.toLowerCase()==name.toLowerCase());
+const course={name,par,gamebook:link};if(i>=0)next[i]=course;else next.push(course);
+gbLink=null;pushCourses(next)}
+function gbUnlink(i){const next=courses.slice();const c={...next[i]};delete c.gamebook;next[i]=c;pushCourses(next)}
+function renderGbLink(){const g=gbLink,importing=g.index<0,name=importing?'':courses[g.index].name;let body='';
+if(g.loading)body='<div class="muted" style="margin-top:12px">Asking GameBook…</div>';
+else if(g.error)body=`<div class="err">${esc(g.error)}</div>`;
+else if(g.course)body=`<div class="muted" style="margin-top:12px">Which tee do you play on <b>${esc(g.course.course)}</b>?</div>
+${importing?`<div class="muted">${(g.course.par||[]).length} holes · Par ${sum(g.course.par||[])}</div>`:''}
+${g.course.tees.map((t,k)=>`<button class="item" onclick="gbSave(${k})"><b>${esc(t.name)}</b>${t.id==g.course.defaultTee?'<div class="muted">GameBook default</div>':''}</button>`).join('')}`;
+else if(g.favs)body=g.favs.length?`<div class="muted" style="margin-top:12px">Your GameBook favourites - ${importing?'pick a course to add:':`pick the one that is <b>${esc(name)}</b>:`}</div>
+${g.favs.map((f,k)=>`<button class="item" onclick="gbPick(${k})"><b>${esc(f.course)}</b><div class="muted">${esc(f.club)} · ${f.holes} holes</div></button>`).join('')}`
+:'<div class="muted" style="margin-top:12px">You have no favourite courses in GameBook.</div>';
+return`<div class="card"><div class="title">${importing?'Import from GameBook':`Link ${esc(name)} to GameBook`}</div>${body}
+<div class="muted" style="margin-top:12px">Missing a course? Tap the star on it in the GameBook app to make it a favourite, then try again.</div>
+<div class="btns"><button class="b" onclick="gbLink=null;render()">Cancel</button></div></div>`}
 
 // ---- Settings ----
 function renderSettings(){return`<div class="card"><div class="title">Course search</div>
@@ -191,14 +234,22 @@ function renderSettings(){return`<div class="card"><div class="title">Course sea
 The free plan allows 35 requests a day; importing one course uses 2.</div>
 <label>GolfCourseAPI key</label><input id="key" value="${esc(settings.apiKey)}" autocomplete="off" autocapitalize="off" spellcheck="false">
 <div class="btns"><button class="b p" onclick="saveSettings({apiKey:$('#key').value},'API key saved')">Save key</button></div></div>
-<div class="card"><div class="title">Home Wi-Fi</div>
-<div class="muted" style="margin-top:4px">During sync the display also joins this network. Your phone can then stay on it, keep its internet
-for course search, and open <b>golf.local</b>. Leave empty to only use the GolfTracker network.</div>
+<div class="card"><div class="title">Hotspot</div>
+<div class="muted" style="margin-top:4px">Used by <b>Phone sync → Hotspot</b>: the display joins this network (your iPhone's
+Personal Hotspot, or home Wi-Fi) and shows its address to open in Safari. Your phone keeps its internet, so course search
+and GolfBox upload work. Turn on <i>Maximize Compatibility</i> on the iPhone - the display only sees 2.4 GHz.</div>
 <label>Network name</label><input id="ssid" value="${esc(settings.wifiSsid)}" autocomplete="off" autocapitalize="off" spellcheck="false">
 <label>Password</label><input id="pass" type="password" placeholder="${settings.hasWifiPass?'Unchanged':''}">
 <div class="btns"><button class="b p" onclick="saveWifi()">Save Wi-Fi</button></div></div>
+<div class="card"><div class="title">Golf GameBook</div>
+<div class="muted" style="margin-top:4px">The display logs in to GameBook itself (over the hotspot) to link your courses and, later,
+send scores. Use the email and password you log in to the GameBook app with.</div>
+<label>Email</label><input id="gbemail" type="email" value="${esc(settings.gamebookEmail)}" autocomplete="off" autocapitalize="off" spellcheck="false">
+<label>Password</label><input id="gbpass" type="password" placeholder="${settings.hasGamebookPass?'Saved - leave empty to keep':''}" autocomplete="off">
+<div class="btns"><button class="b p" onclick="saveGamebook()">Save</button>
+${settings.hasGamebookPass?'<button class="b x" onclick="saveSettings({gamebookEmail:\'\',gamebookPass:\'\'},\'GameBook login removed\')">Remove</button>':''}</div></div>
 <div class="card"><div class="title">GolfBox auto-upload</div>
-<div class="muted" style="margin-top:4px">When the display syncs with internet (home Wi-Fi or hotspot above), new rounds go to the
+<div class="muted" style="margin-top:4px">When the display syncs via Hotspot, new rounds go to the
 <b>GolfBox upload</b> GitHub Action, which registers them in GolfBox. Use a fine-grained GitHub token with
 <i>Contents: read and write</i> on this repository only.</div>
 <label>GitHub repository</label><input id="ghrepo" value="${esc(settings.githubRepo)}" placeholder="owner/name" autocomplete="off" autocapitalize="off" spellcheck="false">
@@ -206,12 +257,14 @@ for course search, and open <b>golf.local</b>. Leave empty to only use the GolfT
 <div class="btns"><button class="b p" onclick="saveGithub()">Save</button>
 ${settings.hasGithubToken?'<button class="b x" onclick="saveSettings({githubToken:\'\'},\'Token removed\')">Remove token</button>':''}</div></div>`}
 
+function saveGamebook(){const body={gamebookEmail:$('#gbemail').value.trim()},p=$('#gbpass').value;if(p)body.gamebookPass=p;
+saveSettings(body,'GameBook login saved')}
 function saveGithub(){const body={githubRepo:$('#ghrepo').value.trim()},t=$('#ghtoken').value.trim();if(t)body.githubToken=t;
 saveSettings(body,'GolfBox upload saved')}
 
 async function saveSettings(body,msg){try{settings=await api('/api/settings',body);render();toast(msg)}catch(e){toast(e.message)}}
 function saveWifi(){const ssid=$('#ssid').value.trim(),pass=$('#pass').value;const body={wifiSsid:ssid};
-if(pass||!ssid)body.wifiPass=pass;saveSettings(body,ssid?`Saved – the display is joining ${ssid}`:'Home Wi-Fi removed')}
+if(pass||!ssid)body.wifiPass=pass;saveSettings(body,ssid?'Saved – used next time you choose Hotspot sync':'Hotspot removed')}
 
 // ---- Shell ----
 function render(){for(const t of['rounds','courses','settings'])$('#t-'+t).classList.toggle('on',tab==t);

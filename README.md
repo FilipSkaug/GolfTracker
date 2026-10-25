@@ -21,8 +21,9 @@ pio run -t upload
 | Select course | scroll all courses | pick | back |
 | Holes | 18 holes / Front 9 / Back 9 (9-hole course: 9 / 18 = twice round) | start | back |
 | Hole | strokes (starts at par) | save hole → next hole | menu: previous hole, finish early, discard |
-| Round saved | – | phone sync | home |
-| Phone sync | – | stop Wi-Fi, home | – |
+| Round saved | – | GolfBox menu (or phone sync if upload isn't set up) | home |
+| GolfBox | Send now / Send later / Don't send | choose | back to summary |
+| Phone sync | Hotspot / GolfTracker Wi-Fi | start that mode; press again to stop | back |
 
 The round is saved to flash after every hole, so a reset or flat battery never loses it — pick
 **Resume round** on the home screen.
@@ -46,9 +47,16 @@ them from the phone like any other course.
 
 ## Phone sync (courses + scores)
 
-1. Choose **Phone sync** (or press on the "Round saved" screen).
-2. On the iPhone, join Wi-Fi **GolfTracker** (password `golf1234`).
-3. Open **http://golf.local** (or http://192.168.4.1) in Safari.
+**Phone sync** asks how to connect (pressing on "Round saved" goes straight to Hotspot):
+
+- **Hotspot** - the display joins your iPhone's Personal Hotspot (set under Settings → Hotspot on
+  the phone page; turn on *Maximize Compatibility*, and keep the Personal Hotspot screen open while
+  it connects). The screen shows the address to open in Safari, e.g. `http://172.20.10.2`. Your
+  phone keeps its internet, so course search and the GolfBox upload work. Don't join the
+  GolfTracker Wi-Fi at the same time - the iPhone stops sharing its hotspot.
+- **GolfTracker Wi-Fi** - the display makes its own network **GolfTracker** (password
+  `golf1234`); open **http://golf.local**. No internet - use it to set up the hotspot or when you
+  have no signal.
 
 - **Courses** tab: search for a course and import its pars, or add one manually (name, 9/18 holes,
   par per hole). Courses are stored on the display.
