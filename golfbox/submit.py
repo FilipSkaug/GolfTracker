@@ -7,7 +7,9 @@ strokes per hole and press "Lagre". Run by .github/workflows/golfbox.yml.
 
 Environment:
   ROUND_JSON        {"id", "course", "par": [...], "strokes": [...], "first"} from the display
-  GOLFBOX_USERNAME  / GOLFBOX_PASSWORD   (GitHub secrets)
+  GOLFBOX_AUTH      optional: the display owner's login + marker, RSA-OAEP encrypted
+                    (tools/make_golfbox_key.sh); decrypted with GOLFBOX_PRIVATE_KEY
+  GOLFBOX_USERNAME  / GOLFBOX_PASSWORD   (GitHub secrets; used when GOLFBOX_AUTH is empty)
   GOLFBOX_MARKER    marker's name as shown in GolfBox (searched by Medlemsnavn)
   PLAY_DATE         dd.mm.yyyy, default today in Norway
   PLAY_TIME         HH:MM, default about four hours before now
@@ -17,6 +19,7 @@ Environment:
   GOLFBOX_FORM_URL  testing only: open this page instead of logging in
 """
 
+import base64
 import datetime
 import json
 import os
@@ -76,6 +79,37 @@ def xpath_literal(s: str) -> str:
 
 
 # ---- Input ----------------------------------------------------------------------
+
+
+def apply_display_login() -> None:
+    """Uses the login + marker the display sent (encrypted), if any.
+
+    Several people's displays can share this workflow this way; the values are
+    masked in the log before anything else is printed."""
+    blob = os.environ.get("GOLFBOX_AUTH", "").strip()
+    if not blob:
+        return
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import padding
+
+    key = serialization.load_pem_private_key(env("GOLFBOX_PRIVATE_KEY").encode(), password=None)
+    try:
+        plain = key.decrypt(
+            base64.b64decode(blob),
+            padding.OAEP(mgf=padding.MGF1(hashes.SHA256()), algorithm=hashes.SHA256(), label=None),
+        )
+    except Exception:
+        raise Fail("Couldn't decrypt the display's GolfBox login - was the display flashed with "
+                   "the key that matches GOLFBOX_PRIVATE_KEY?")
+    login = json.loads(plain)
+    for value in (login.get("u"), login.get("p"), login.get("m")):
+        if value:
+            print(f"::add-mask::{value}", flush=True)
+    os.environ["GOLFBOX_USERNAME"] = login.get("u", "")
+    os.environ["GOLFBOX_PASSWORD"] = login.get("p", "")
+    if login.get("m"):
+        os.environ["GOLFBOX_MARKER"] = login["m"]
+    log("Using the GolfBox login sent by the display")
 
 
 def load_round() -> dict:
@@ -418,6 +452,7 @@ def save(page: Page) -> None:
 
 
 def main() -> int:
+    apply_display_login()
     r = load_round()
     base, cfg = course_config(r["course"])
     date, tee_time = play_date_time()
